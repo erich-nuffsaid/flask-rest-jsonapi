@@ -6,7 +6,7 @@ from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.orm.collections import InstrumentedList
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm.attributes import QueryableAttribute
-from sqlalchemy.orm import joinedload, ColumnProperty, RelationshipProperty
+from sqlalchemy.orm import joinedload, ColumnProperty, RelationshipProperty, scoped_session
 from marshmallow import class_registry
 from marshmallow.base import SchemaABC
 
@@ -56,7 +56,7 @@ class SqlalchemyDataLayer(BaseDataLayer):
 
         self.session.add(obj)
         try:
-            self.session.commit()
+            self.do_commit()
         except JsonApiException as e:
             self.session.rollback()
             raise e
@@ -158,7 +158,7 @@ class SqlalchemyDataLayer(BaseDataLayer):
         self.apply_nested_fields(data, obj)
 
         try:
-            self.session.commit()
+            self.do_commit()
         except JsonApiException as e:
             self.session.rollback()
             raise e
@@ -184,7 +184,7 @@ class SqlalchemyDataLayer(BaseDataLayer):
 
         self.session.delete(obj)
         try:
-            self.session.commit()
+            self.do_commit()
         except JsonApiException as e:
             self.session.rollback()
             raise e
@@ -241,7 +241,7 @@ class SqlalchemyDataLayer(BaseDataLayer):
                 updated = True
 
         try:
-            self.session.commit()
+            self.do_commit()
         except JsonApiException as e:
             self.session.rollback()
             raise e
@@ -340,7 +340,7 @@ class SqlalchemyDataLayer(BaseDataLayer):
                 updated = True
 
         try:
-            self.session.commit()
+            self.do_commit()
         except JsonApiException as e:
             self.session.rollback()
             raise e
@@ -390,7 +390,7 @@ class SqlalchemyDataLayer(BaseDataLayer):
             updated = True
 
         try:
-            self.session.commit()
+            self.do_commit()
         except JsonApiException as e:
             self.session.rollback()
             raise e
@@ -592,6 +592,18 @@ class SqlalchemyDataLayer(BaseDataLayer):
         :param dict view_kwargs: kwargs from the resource view
         """
         return self.session.query(self.model)
+
+    def do_commit(self):
+        """
+        Briefly override our session's behaviour to prevent it from expiring what
+        we've just loaded
+        """
+        sess = self.session() if isinstance(self.session, scoped_session) else self.session
+        before = sess.expire_on_commit
+        sess.expire_on_commit = False
+        sess.commit()
+        sess.expire_on_commit = before
+
 
     def before_create_object(self, data, view_kwargs):
         """Provide additional data before object creation
