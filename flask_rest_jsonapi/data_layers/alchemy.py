@@ -6,7 +6,7 @@ from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.orm.collections import InstrumentedList
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm.attributes import QueryableAttribute
-from sqlalchemy.orm import joinedload, ColumnProperty, RelationshipProperty, scoped_session
+from sqlalchemy.orm import aliased, joinedload, ColumnProperty, RelationshipProperty, scoped_session
 from marshmallow import class_registry
 from marshmallow.base import SchemaABC
 
@@ -509,11 +509,26 @@ class SqlalchemyDataLayer(BaseDataLayer):
         :param list sort_info: sort information
         :return Query: the sorted query
         """
+        relationship_joins = {}
         for sort_opt in sort_info:
             field = sort_opt['field']
-            if not hasattr(self.model, field):
-                raise InvalidSort("{} has no attribute {}".format(self.model.__name__, field))
-            query = query.order_by(getattr(getattr(self.model, field), sort_opt['order'])())
+            if sort_opt["relationship_attribute_sort"]:
+                field = sort_opt['field']
+                # user_task.created_at
+                # relationship_field = user_task
+                # relationship_field_attribute = created_at
+                relationship_field, relationship_field_attribute = field.split('.')
+                relationship_field_class = getattr(self.model, relationship_field).property.mapper.class_
+                if relationship_field not in relationship_joins:
+                    relationship_field_class_alias = aliased(relationship_field_class)
+                    relationship_joins[relationship_field] = relationship_field_class_alias
+                    query = query.join(relationship_field_class_alias)
+                relationship_field_class_alias = relationship_joins[relationship_field]
+                query = query.order_by(getattr(getattr(relationship_field_class_alias, relationship_field_attribute), sort_opt['order'])())
+            else:
+                if not hasattr(self.model, field):
+                    raise InvalidSort("{} has no attribute {}".format(self.model.__name__, field))
+                query = query.order_by(getattr(getattr(self.model, field), sort_opt['order'])())
         return query
 
     def paginate_query(self, query, paginate_info):
