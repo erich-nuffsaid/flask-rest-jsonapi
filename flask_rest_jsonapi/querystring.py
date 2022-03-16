@@ -173,6 +173,7 @@ class QueryStringManager(object):
             sorting_results = []
             relationship_sort_fields = []
             for sort_field in self.qs['sort'].split(','):
+                order = 'desc' if sort_field.startswith('-') else 'asc'
                 field = sort_field.replace('-', '')
                 if field not in self.schema._declared_fields:
                     nested_fields = field.split('.')
@@ -182,22 +183,16 @@ class QueryStringManager(object):
                     # sort=user_task.created_at
                     # But this is not allowed
                     # sort=user_task.another_relationship.attribute
+                    # Additionally, we only support sorting by many=False relationships
                     if len(nested_fields) == 2 and nested_fields[0] in self.schema._declared_fields and not self.schema._declared_fields[nested_fields[0]].many:
-                        relationship_sort_fields.append(sort_field)
+                        sorting_results.append({'field': field, 'order': order, "relationship_attribute_sort": True})
                         continue
                     else:
                         raise InvalidSort("{} has no attribute {}".format(self.schema.__name__, field))
                 if field in get_relationships(self.schema):
                     raise InvalidSort("You can't sort on {} because it is a relationship field".format(field))
                 field = get_model_field(self.schema, field)
-                order = 'desc' if sort_field.startswith('-') else 'asc'
                 sorting_results.append({'field': field, 'order': order, "relationship_attribute_sort": False})
-            if relationship_sort_fields:
-                for sort_field in relationship_sort_fields:
-                    field = sort_field.replace('-', '')
-                    order = 'desc' if sort_field.startswith('-') else 'asc'
-                    sorting_results.append({'field': field, 'order': order, "relationship_attribute_sort": True})
-
             return sorting_results
 
         return []
