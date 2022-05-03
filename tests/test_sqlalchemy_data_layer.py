@@ -2,6 +2,7 @@
 
 from six.moves.urllib.parse import urlencode, parse_qs
 import pytest
+from datetime import datetime
 
 from sqlalchemy import create_engine, Column, Integer, DateTime, String, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship
@@ -138,6 +139,12 @@ def engine(person_tag_model, person_single_tag_model, person_model, computer_mod
 def session(engine):
     Session = sessionmaker(bind=engine)
     return Session()
+
+@pytest.fixture(autouse=True)
+def wipe_db(session, person_model, computer_model):
+    session.query(person_model).delete()
+    session.query(computer_model).delete()
+    session.commit()
 
 
 @pytest.fixture()
@@ -315,8 +322,7 @@ def person_list(session, person_model, dummy_decorator, person_schema, before_cr
         data_layer = {'model': person_model,
                       'session': session,
                       'mzthods': {'before_create_object': before_create_object}}
-        get_decorators = [dummy_decorator]
-        post_decorators = [dummy_decorator]
+        decorators = ( dummy_decorator, flask_rest_jsonapi.decorators.jsonapi_exception_formatter )
         get_schema_kwargs = dict()
         post_schema_kwargs = dict()
 
@@ -332,9 +338,7 @@ def person_detail(session, person_model, dummy_decorator, person_schema, before_
                       'url_field': 'person_id',
                       'methods': {'before_update_object': before_update_object,
                                   'before_delete_object': before_delete_object}}
-        get_decorators = [dummy_decorator]
-        patch_decorators = [dummy_decorator]
-        delete_decorators = [dummy_decorator]
+        decorators = ( dummy_decorator, flask_rest_jsonapi.decorators.jsonapi_exception_formatter )
         get_schema_kwargs = dict()
         patch_schema_kwargs = dict()
         delete_schema_kwargs = dict()
@@ -349,10 +353,7 @@ def person_computers(session, person_model, dummy_decorator, person_schema):
         data_layer = {'session': session,
                       'model': person_model,
                       'url_field': 'person_id'}
-        get_decorators = [dummy_decorator]
-        post_decorators = [dummy_decorator]
-        patch_decorators = [dummy_decorator]
-        delete_decorators = [dummy_decorator]
+        decorators = ( dummy_decorator, flask_rest_jsonapi.decorators.jsonapi_exception_formatter )
 
     yield PersonComputersRelationship
 
@@ -362,6 +363,7 @@ def person_list_raise_jsonapiexception():
     class PersonList(ResourceList):
         def get(self):
             raise JsonApiException('', '')
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield PersonList
 
@@ -371,6 +373,7 @@ def person_list_raise_exception():
     class PersonList(ResourceList):
         def get(self):
             raise Exception()
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield PersonList
 
@@ -380,6 +383,7 @@ def person_list_response():
     class PersonList(ResourceList):
         def get(self):
             return make_response('')
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield PersonList
 
@@ -392,6 +396,7 @@ def person_list_without_schema(session, person_model):
 
         def get(self):
             return make_response('')
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield PersonList
 
@@ -413,6 +418,7 @@ def computer_list(session, computer_model, computer_schema, query):
         data_layer = {'model': computer_model,
                       'session': session,
                       'methods': {'query': query}}
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield ComputerList
 
@@ -424,6 +430,7 @@ def computer_detail(session, computer_model, dummy_decorator, computer_schema):
         data_layer = {'model': computer_model,
                       'session': session}
         methods = ['GET', 'PATCH']
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield ComputerDetail
 
@@ -434,6 +441,7 @@ def computer_owner(session, computer_model, dummy_decorator, computer_schema):
         schema = computer_schema
         data_layer = {'session': session,
                       'model': computer_model}
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield ComputerOwnerRelationship
 
@@ -445,6 +453,7 @@ def string_json_attribute_person_detail(session, string_json_attribute_person_mo
         schema = string_json_attribute_person_schema
         data_layer = {'session': session,
                       'model': string_json_attribute_person_model}
+        decorators = (flask_rest_jsonapi.decorators.jsonapi_exception_formatter ,)
 
     yield StringJsonAttributePersonDetail
 
@@ -574,9 +583,27 @@ def test_query_string_manager(person_schema):
     with pytest.raises(InvalidSort):
         qsm.sorting
 
+def test_qs_sorting(computer_schema, person_schema):
+    query_string = {"sort": "-serial,[nullslast]owner.name"}
+    qsm = QSManager(query_string, computer_schema)
+    assert qsm.sorting == [
+        {'field': 'serial', 'joins': [], 'nulls': None, 'order': 'desc'},
+        {'field': 'name', 'joins': ['person'], 'nulls': 'nullslast', 'order': 'asc'}
+    ]
+    query_string = {"sort": "id"}
+    qsm = QSManager(query_string, computer_schema)
+    assert qsm.sorting == [
+        {'field': 'id', 'joins': [], 'nulls': None, 'order': 'asc'},
+    ]
+    query_string = {"sort": "-[nullsfirst]owner.birth_date,-[nullsfirst]owner.name"}
+    qsm = QSManager(query_string, computer_schema)
+    assert qsm.sorting == [
+        {'field': 'birth_date', 'joins': ['person'], 'nulls': 'nullsfirst', 'order': 'desc'},
+        {'field': 'name', 'joins': ['person'], 'nulls': 'nullsfirst', 'order': 'desc'}
+    ]
 
 def test_resource(app, person_model, person_schema, session, monkeypatch):
-    def schema_load_mock(*args):
+    def schema_load_mock(*args, **kwargs):
         raise ValidationError(dict(errors=[dict(status=None, title=None)]))
 
     with app.app_context():
@@ -1315,7 +1342,7 @@ def test_sqlalchemy_data_layer_create_relationship_error(session, person_model, 
         dl.create_relationship(dict(data=None), 'foo', '', dict(id=1))
 
 
-def test_sqlalchemy_data_layer_get_relationship_field_not_found(session, person_model):
+def test_sqlalchemy_data_layer_get_relationship_field_not_found(session, person_model, person):
     with pytest.raises(RelationNotFound):
         dl = SqlalchemyDataLayer(dict(session=session, model=person_model))
         dl.get_relationship('error', '', '', dict(id=1))
@@ -1356,7 +1383,7 @@ def test_sqlalchemy_data_layer_delete_relationship_error(session, person_model, 
 
 
 def test_sqlalchemy_data_layer_sort_query_error(session, person_model, monkeypatch):
-    with pytest.raises(InvalidSort):
+    with pytest.raises(Exception):
         dl = SqlalchemyDataLayer(dict(session=session, model=person_model))
         dl.sort_query(None, [dict(field='test')])
 
@@ -1897,7 +1924,7 @@ def test_api_resources(app, person_list):
     api.init_app(app)
 
 
-def test_relationship_containing_hyphens(api, app, client, person_schema, person_computers, register_routes,
+def test_relationship_containing_hyphens(app, client, person_schema, person_computers, register_routes,
                                          computer_schema, person):
     """
     This is a bit of a hack. Basically, since we can no longer have two attributes that read from the same key
@@ -1921,6 +1948,7 @@ def test_relationship_containing_hyphens(api, app, client, person_schema, person
     class PersonComputersOwnedRelationship(person_computers):
         schema = PersonOwnedSchema
 
+    api = Api()
     api.route(PersonComputersOwnedRelationship, 'person_computers_owned',
               '/persons/<int:person_id>/relationships/computers-owned')
     api.init_app(app)
@@ -1928,3 +1956,13 @@ def test_relationship_containing_hyphens(api, app, client, person_schema, person
     response = client.get('/persons/{}/relationships/computers-owned'.format(person.person_id),
                           content_type='application/vnd.api+json')
     assert response.status_code == 200
+
+def test_sort_nulls(client, register_routes, person, person_2, session):
+    person.birth_date = datetime(2000, 1, 1)
+    person_2.birth_date = None
+    session.commit()
+
+    resp = client.get("/persons?sort=[nullsfirst]birth_date")
+    assert [item["id"] for item in resp.json["data"]] == [str(person_2.person_id), str(person.person_id)]
+    resp = client.get("/persons?sort=[nullslast]birth_date")
+    assert [item["id"] for item in resp.json["data"]] == [str(person.person_id), str(person_2.person_id)]
