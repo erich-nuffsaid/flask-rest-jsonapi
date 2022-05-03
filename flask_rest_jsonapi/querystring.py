@@ -3,11 +3,13 @@
 """Helper to deal with querystring parameters according to jsonapi specification"""
 
 import json
+import re
 
 from flask import current_app
+from marshmallow import class_registry
 
 from flask_rest_jsonapi.exceptions import BadRequest, InvalidFilters, InvalidSort, InvalidField, InvalidInclude
-from flask_rest_jsonapi.schema import get_model_field, get_relationships, get_schema_from_type
+from flask_rest_jsonapi.schema import get_model_field, get_related_schema, get_relationships, get_schema_from_type
 
 
 class QueryStringManager(object):
@@ -165,37 +167,50 @@ class QueryStringManager(object):
         Example of return value::
 
             [
-                {'field': 'created_at', 'order': 'desc'},
+                {'field': 'created_at', 'order': 'desc', 'nulls': None, 'joins': ['car', 'wheel']},
             ]
 
         """
-        if self.qs.get('sort'):
-            sorting_results = []
-            relationship_sort_fields = []
-            for sort_field in self.qs['sort'].split(','):
-                order = 'desc' if sort_field.startswith('-') else 'asc'
-                field = sort_field.replace('-', '')
-                if field not in self.schema._declared_fields:
-                    nested_fields = field.split('.')
-                    # Support sort by relationship attribute.
-                    # For now, we are siding with simplicity and support only one level
-                    # So this is allowed
-                    # sort=user_task.created_at
-                    # But this is not allowed
-                    # sort=user_task.another_relationship.attribute
-                    # Additionally, we only support sorting by many=False relationships
-                    if len(nested_fields) == 2 and nested_fields[0] in self.schema._declared_fields and not self.schema._declared_fields[nested_fields[0]].many:
-                        sorting_results.append({'field': field, 'order': order, "relationship_attribute_sort": True})
-                        continue
-                    else:
-                        raise InvalidSort("{} has no attribute {}".format(self.schema.__name__, field))
-                if field in get_relationships(self.schema):
-                    raise InvalidSort("You can't sort on {} because it is a relationship field".format(field))
-                field = get_model_field(self.schema, field)
-                sorting_results.append({'field': field, 'order': order, "relationship_attribute_sort": False})
-            return sorting_results
+        if not self.qs.get('sort'):
+            return []
+        sorting_results = []
+        # Eg. -[nullslast]foo.bar.baz -> ("-", "nullslast", "foo.bar.", "baz")
+        pattern = re.compile(
+            "(-?)"
+            r"(?:\[((?:nullsfirst)|(?:nullslast))\])?"
+            r"((?:\w+\.)*)"
+            r"(\w+)"
+        )
+        for sort_field in self.qs['sort'].split(','):
+            # Parsing
+            match = pattern.match(sort_field)
+            if match is None:
+                raise InvalidSort("Invalid sort field format {sort_field}")
+            minus, nulls, join_path, schema_field = match.groups()
+            order = 'desc' if minus else 'asc'
+            schema_joins = join_path.strip(".").split(".") if join_path else []
 
-        return []
+            # Convert schema -> model relationships/fields
+            cur_sch = self.schema
+            model_joins = []
+            for join in schema_joins:
+                if join not in get_relationships(cur_sch):
+                    raise InvalidSort("{} has no relationship {}".format(cur_sch.__name__, join))
+                relationship = cur_sch._declared_fields[join]
+                if relationship.many:
+                    raise InvalidSort("Cannot do X->many join from {} to {}".format(cur_sch.__name__, join))
+                model_joins.append(get_model_field(cur_sch, join))
+                cur_sch = class_registry.get_class(get_related_schema(cur_sch, join))
+
+            if schema_field not in cur_sch._declared_fields:
+                raise InvalidSort("{} has no attribute {}".format(cur_sch.__name__, schema_field))
+            elif schema_field in get_relationships(cur_sch):
+                raise InvalidSort("You can't sort on {} because it is a relationship field".format(schema_field))
+            model_field = get_model_field(cur_sch, schema_field)
+
+            sorting_results.append({"field": model_field, "order": order, "nulls": nulls, "joins": model_joins})
+
+        return sorting_results
 
     @property
     def include(self):

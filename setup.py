@@ -1,6 +1,7 @@
 from setuptools import setup, find_packages
 
-__version__ = '1.0.4'
+# Make sure you create a tag as well, so that git urls will work
+__version__ = '1.0.5'
 
 setup(
     name="Flask-REST-JSONAPI",

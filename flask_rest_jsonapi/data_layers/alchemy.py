@@ -505,30 +505,26 @@ class SqlalchemyDataLayer(BaseDataLayer):
     def sort_query(self, query, sort_info):
         """Sort query according to jsonapi 1.0
 
+        TODO dedupe joins
+
         :param Query query: sqlalchemy query to sort
         :param list sort_info: sort information
         :return Query: the sorted query
         """
-        relationship_joins = {}
         for sort_opt in sort_info:
-            field = sort_opt['field']
-            if sort_opt["relationship_attribute_sort"]:
-                field = sort_opt['field']
-                # user_task.created_at
-                # relationship_field = user_task
-                # relationship_field_attribute = created_at
-                relationship_field, relationship_field_attribute = field.split('.')
-                relationship_field_class = getattr(self.model, relationship_field).property.mapper.class_
-                if relationship_field not in relationship_joins:
-                    relationship_field_class_alias = aliased(relationship_field_class)
-                    relationship_joins[relationship_field] = relationship_field_class_alias
-                    query = query.join(relationship_field_class_alias)
-                relationship_field_class_alias = relationship_joins[relationship_field]
-                query = query.order_by(getattr(getattr(relationship_field_class_alias, relationship_field_attribute), sort_opt['order'])())
-            else:
-                if not hasattr(self.model, field):
-                    raise InvalidSort("{} has no attribute {}".format(self.model.__name__, field))
-                query = query.order_by(getattr(getattr(self.model, field), sort_opt['order'])())
+            cur_model = self.model
+            for join in sort_opt["joins"]:
+                relationship = getattr(cur_model, join)
+                query = query.join(relationship, isouter=True)
+                cur_model = relationship.property.mapper.class_
+            sort_expr = getattr(cur_model, sort_opt["field"])
+            sort_expr = sort_expr.desc() if sort_opt["order"] == "desc" else sort_expr.asc()
+            if sort_opt["nulls"] == "nullslast":
+                sort_expr = sort_expr.nullslast()
+            elif sort_opt["nulls"] == "nullsfirst":
+                sort_expr = sort_expr.nullsfirst()
+            query = query.order_by(sort_expr)
+
         return query
 
     def paginate_query(self, query, paginate_info):
