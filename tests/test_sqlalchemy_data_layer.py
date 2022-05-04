@@ -402,7 +402,7 @@ def person_list_without_schema(session, person_model):
 
 
 @pytest.fixture(scope="module")
-def query():
+def query(computer_model):
     def query_(self, view_kwargs):
         if view_kwargs.get('person_id') is not None:
             return self.session.query(computer_model).join(person_model).filter_by(person_id=view_kwargs['person_id'])
@@ -493,7 +493,7 @@ def register_routes(client, api, app, api_blueprint, person_list, person_detail,
     api.route(person_list_response, 'person_list_response', '/persons_response')
     api.route(person_list_without_schema, 'person_list_without_schema', '/persons_without_schema')
     api.route(computer_list, 'computer_list', '/computers', '/persons/<int:person_id>/computers')
-    api.route(computer_list, 'computer_detail', '/computers/<int:id>')
+    api.route(computer_detail, 'computer_detail', '/computers/<int:id>')
     api.route(computer_owner, 'computer_owner', '/computers/<int:id>/relationships/owner')
     api.route(string_json_attribute_person_list, 'string_json_attribute_person_list', '/string_json_attribute_persons')
     api.route(string_json_attribute_person_detail, 'string_json_attribute_person_detail',
@@ -1966,3 +1966,13 @@ def test_sort_nulls(client, register_routes, person, person_2, session):
     assert [item["id"] for item in resp.json["data"]] == [str(person_2.person_id), str(person.person_id)]
     resp = client.get("/persons?sort=[nullslast]birth_date")
     assert [item["id"] for item in resp.json["data"]] == [str(person.person_id), str(person_2.person_id)]
+
+def test_sort_related(client, register_routes, person, person_2, session, computer_model):
+    c1 = computer_model(person=person, serial='1')
+    c2 = computer_model(person=person_2, serial='2')
+    session.commit()
+
+    resp = client.get("/computers?sort=owner.name")
+    assert [item["id"] for item in resp.json["data"]] == [str(person.person_id), str(person_2.person_id)]
+    resp = client.get("/computers?sort=-owner.name")
+    assert [item["id"] for item in resp.json["data"]] == [str(person_2.person_id), str(person.person_id)]
