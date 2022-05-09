@@ -200,7 +200,7 @@ class QueryStringManager(object):
                 if relationship.many:
                     raise InvalidSort("Cannot do X->many join from {} to {}".format(cur_sch.__name__, join))
                 model_joins.append(get_model_field(cur_sch, join))
-                cur_sch = class_registry.get_class(get_related_schema(cur_sch, join))
+                cur_sch = type(get_related_schema(cur_sch, join))
 
             if schema_field not in cur_sch._declared_fields:
                 raise InvalidSort("{} has no attribute {}".format(cur_sch.__name__, schema_field))
