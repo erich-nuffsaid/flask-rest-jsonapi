@@ -70,7 +70,7 @@ def compute_schema(schema_cls, default_kwargs, qs, include):
         for include_path in include:
             field = include_path.split('.')[0]
             relation_field = schema.declared_fields[field]
-            related_schema_cls = schema.declared_fields[field].__dict__['_Relationship__schema']
+            related_schema_cls = type(schema.declared_fields[field].schema)
             related_schema_kwargs = {}
             if 'context' in default_kwargs:
                 related_schema_kwargs['context'] = default_kwargs['context']
@@ -143,7 +143,7 @@ def get_related_schema(schema, field):
     :param field: the relationship field
     :return Schema: the related schema
     """
-    return schema._declared_fields[field].__dict__['_Relationship__schema']
+    return schema._declared_fields[field].schema
 
 
 def get_schema_from_type(resource_type):

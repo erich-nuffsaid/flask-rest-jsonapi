@@ -1967,12 +1967,16 @@ def test_sort_nulls(client, register_routes, person, person_2, session):
     resp = client.get("/persons?sort=[nullslast]birth_date")
     assert [item["id"] for item in resp.json["data"]] == [str(person.person_id), str(person_2.person_id)]
 
-def test_sort_related(client, register_routes, person, person_2, session, computer_model):
+def test_sort_related(client, register_routes, person, person_2, session, computer_model, computer_schema):
     c1 = computer_model(person=person, serial='1')
     c2 = computer_model(person=person_2, serial='2')
     session.commit()
 
     resp = client.get("/computers?sort=owner.name")
     assert [item["id"] for item in resp.json["data"]] == [str(person.person_id), str(person_2.person_id)]
+    resp = client.get("/computers?sort=-owner.name")
+    assert [item["id"] for item in resp.json["data"]] == [str(person_2.person_id), str(person.person_id)]
+    # Should still work after accessing the Relationship.schema property, mutating Relationship.__schema
+    computer_schema._declared_fields["owner"].schema
     resp = client.get("/computers?sort=-owner.name")
     assert [item["id"] for item in resp.json["data"]] == [str(person_2.person_id), str(person.person_id)]
